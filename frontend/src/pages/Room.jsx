@@ -250,20 +250,17 @@ export function Room() {
       shouldSend: roomId && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current
     });
     
+    // IMMEDIATELY send join-room when conditions are met, no delay
     if (roomId && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current) {
       console.log('[Room] ✓ SENDING join-room message for roomId:', roomId);
-      joinRoomSentRef.current = true; // Mark as sent immediately
+      joinRoomSentRef.current = true; // Mark as sent immediately to prevent duplicate sends
       
-      // Small delay to ensure connection is fully ready
-      const timer = setTimeout(() => {
-        signalingsSend({
-          type: 'join-room',
-          roomId
-        });
-        console.log('[Room] join-room message sent');
-      }, 100);
-      
-      return () => clearTimeout(timer);
+      // Send immediately without delay
+      signalingsSend({
+        type: 'join-room',
+        roomId
+      });
+      console.log('[Room] join-room message sent');
     } else {
       if (!roomId) console.log('[Room] ✗ No roomId yet');
       if (!signalingsSend) console.log('[Room] ✗ signalingsSend not ready');
