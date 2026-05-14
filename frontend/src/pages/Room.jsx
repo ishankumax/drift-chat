@@ -288,8 +288,8 @@ export function Room() {
     });
     
     // CRITICAL: Wait for stream to be initialized before sending join-room
-    if (!streamInitializedRef.current === true) {
-      console.log('[Room] ⏳ Waiting for stream initialization...');
+    if (streamInitializedRef.current !== true) {
+      console.log('[Room] ⏳ Waiting for stream initialization... current state:', streamInitializedRef.current);
       return;
     }
 
