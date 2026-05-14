@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export function useWebRTC(signalingRef) {
   const localStreamRef = useRef(null);
@@ -15,71 +15,82 @@ export function useWebRTC(signalingRef) {
 
   const iceCandidateQueues = useRef({});
   const isNegotiatingRef = useRef({});
+  // Cached ICE servers fetched from Metered REST API.
+  // Metered issues time-limited credentials — fetching at runtime ensures they're always fresh.
+  // Falls back to static STUN + freeturn.net if fetch fails or env vars aren’t set.
+  const iceServersRef = useRef(null);
+
+  // Fetch Metered TURN credentials once on mount.
+  useEffect(() => {
+    const apiUrl = import.meta.env.VITE_METERED_API_URL;
+    const apiKey = import.meta.env.VITE_METERED_API_KEY;
+    if (!apiUrl || !apiKey) return;
+
+    fetch(`${apiUrl}?apiKey=${apiKey}`)
+      .then(r => r.json())
+      .then(servers => {
+        iceServersRef.current = servers;
+        console.log('[WebRTC] ✅ Fetched', servers.length, 'ICE servers from Metered:', servers.map(s => s.urls).flat());
+      })
+      .catch(err => {
+        console.error('[WebRTC] Failed to fetch Metered ICE servers, falling back to static config:', err.message);
+      });
+  }, []);
 
   // Get ICE servers from environment or defaults
   // Critical: Support multiple TURN servers and transports for college WiFi compatibility
   const getIceServers = useCallback(() => {
+    if (iceServersRef.current) {
+      console.log('[WebRTC] Using dynamic Metered ICE servers');
+      return iceServersRef.current;
+    }
+
     const servers = [
-      // Primary STUN servers (Google)
+      // Google STUN servers
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
       { urls: 'stun:stun3.l.google.com:19302' },
       { urls: 'stun:stun4.l.google.com:19302' },
-      // Free Open Relay TURN servers (metered.ca open relay project)
-      // These are the fallback that makes cross-network calls work without a paid TURN server.
-      // STUN-only fails when both peers are behind different NATs (e.g. two different WiFi networks).
-      { urls: 'stun:openrelay.metered.ca:80' },
+      // freeturn.net — stable free TURN relay, works cross-network
+      // These replace openrelay.metered.ca which changed its public credentials.
       {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
+        urls: 'turn:freeturn.net:3478',
+        username: 'free',
+        credential: 'free'
       },
       {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turns:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
+        urls: 'turns:freeturn.net:5349',
+        username: 'free',
+        credential: 'free'
       }
     ];
-    
+
     // Add custom STUN if provided
     if (import.meta.env.VITE_STUN_URL) {
       servers.unshift({ urls: import.meta.env.VITE_STUN_URL });
       console.log('[WebRTC] Added custom STUN:', import.meta.env.VITE_STUN_URL);
     }
-    
-    // CRITICAL: Add TURN servers with multiple transports for college WiFi
+
     if (import.meta.env.VITE_TURN_URL) {
       const turnUrl = import.meta.env.VITE_TURN_URL;
       const username = import.meta.env.VITE_TURN_USERNAME;
       const credential = import.meta.env.VITE_TURN_CREDENTIAL;
-      
-      console.log('[WebRTC] TURN config check:', { turnUrl, username: !!username, credential: !!credential });
-      
-      // Parse URL to extract host and port
+
       let host = turnUrl;
-      if (turnUrl.startsWith('turn:')) {
-        host = turnUrl.substring(5);
-      } else if (turnUrl.startsWith('turns:')) {
-        host = turnUrl.substring(6);
-      }
-      
-      // Only add TURN if properly configured
-      if (username && credential) {
-        // Authenticated TURN (e.g., metered.ca) - use different ports per transport
-        const hasPort = host.includes(':');
-        const [hostOnly, port] = hasPort ? host.split(':') : [host, '443'];
-        
+      if (turnUrl.startsWith('turn:')) host = turnUrl.substring(5);
+      else if (turnUrl.startsWith('turns:')) host = turnUrl.substring(6);
+
+      const [hostOnly, port] = host.includes(':') ? host.split(':') : [host, '443'];
+
+      // Skip if VITE_TURN_URL is still the placeholder value.
+      // Attempting to connect to a non-existent domain wastes ICE budget and
+      // makes connectivity checks time-out faster.
+      const PLACEHOLDER = 'your-deployed-api-domain.com';
+      if (hostOnly === PLACEHOLDER) {
+        console.warn('[WebRTC] ⚠️ VITE_TURN_URL is still the placeholder (your-deployed-api-domain.com) — skipping.');
+        console.warn('[WebRTC] Set VITE_TURN_URL to a real TURN server (e.g. Metered.ca or freeturn.net) to enable reliable cross-network calls.');
+      } else if (username && credential) {
         servers.push({
           urls: [
             `turn:${hostOnly}:3478?transport=udp`,
@@ -89,24 +100,18 @@ export function useWebRTC(signalingRef) {
           username,
           credential
         });
-        
         console.log('[WebRTC] ✅ Added authenticated TURN:', { hostOnly, ports: ['3478', '80', port] });
       } else {
-        // ❌ CRITICAL: WebRTC requires username+credential for turn: scheme URLs
-        // There is NO way to add public TURN without credentials - browser will reject it
-        // Solution: Rely on STUN only (6 Google STUN servers already configured)
-        console.warn('[WebRTC] ⚠️ TURN URL provided but NO credentials - cannot use TURN');
-        console.warn('[WebRTC] Browser requires authentication for turn: URLs - it\'s a WebRTC limitation');
-        console.warn('[WebRTC] Using STUN only (should work for same-network/college WiFi calls)');
+        console.warn('[WebRTC] ⚠️ TURN URL provided but NO credentials — skipping (browser requires auth for turn: URLs).');
       }
     }
-    
+
     console.log('[WebRTC] ICE server config:', {
       totalServers: servers.length,
-      stun: servers.filter(s => s.urls.includes('stun')).length,
+      stun: servers.filter(s => !s.username).length,
       turn: servers.filter(s => s.username).length
     });
-    
+
     return servers;
   }, []);
 
@@ -232,14 +237,18 @@ export function useWebRTC(signalingRef) {
 
     pc.oniceconnectionstatechange = () => {
       console.log('[WebRTC] ICE connection state for', peerId, ':', pc.iceConnectionState);
-      
-      // Log connection diagnostics
+
       if (pc.iceConnectionState === 'failed') {
         console.error('[WebRTC] ❌ ICE connection FAILED for', peerId);
-        console.error('[WebRTC] Possible causes:');
-        console.error('  - TURN server unreachable or misconfigured');
-        console.error('  - Firewall/NAT blocking P2P connection');
-        console.error('  - Both devices on restrictive networks');
+        // Attempt ICE restart — this re-gathers candidates and re-tries connectivity
+        // checks without re-doing the full offer/answer. Helps when the first TURN
+        // allocation fails transiently (e.g. server busy, transient network issue).
+        console.warn('[WebRTC] Attempting ICE restart for', peerId);
+        try {
+          pc.restartIce();
+        } catch (err) {
+          console.error('[WebRTC] ICE restart error:', err.message);
+        }
       } else if (pc.iceConnectionState === 'connected') {
         console.log('[WebRTC] ✓ ICE connection ESTABLISHED for', peerId);
       }
