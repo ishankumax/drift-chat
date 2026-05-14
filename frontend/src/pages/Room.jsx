@@ -32,6 +32,7 @@ export function Room() {
   const waitingVideoRef = useRef(null);
   const streamInitializedRef = useRef(false);
   const joinRoomSentRef = useRef(false); // Guard to send join-room only once
+  const webRTCRef = useRef(null); // Stable ref to webRTC object to avoid dep-array churn
 
   // State
   const [roomId, setRoomId] = useState(routeRoomId || null);
@@ -46,9 +47,14 @@ export function Room() {
   const [roomKilledOverlay, setRoomKilledOverlay] = useState(false);
   const [nextStrangerCountdown, setNextStrangerCountdown] = useState(null);
   const [loading, setLoading] = useState(!routeRoomId);
+  const [localStreamReady, setLocalStreamReady] = useState(false);
 
   // Call WebRTC hook with signalingRef (now signalingRef is declared)
   const webRTC = useWebRTC(signalingRef);
+  // Keep webRTCRef in sync so callbacks can access webRTC without adding it to dep arrays.
+  // webRTC is a new object each render (hook returns object literal) — using it as a dep
+  // causes every useCallback/useEffect that lists it to fire on every render.
+  webRTCRef.current = webRTC;
 
   // Callbacks - ALL THIRD (must come before effects that use them)
   const handleNextStranger = useCallback(async () => {
@@ -86,35 +92,37 @@ export function Room() {
   }, [reportTarget, roomId]);
 
   const handleSignalingMessage = useCallback((message) => {
+    // Access webRTC through the ref to avoid adding the object to this callback's
+    // dep array. The webRTC object is a new reference every render (hook returns
+    // an object literal), so listing it as a dep would recreate this callback
+    // every render, causing useSignaling to update onMessageRef every render.
+    const rtc = webRTCRef.current;
     console.log('[Room] Received signaling message:', message.type, message);
     switch (message.type) {
       case 'room-joined':
         console.log('[Room] ✓ HANDLING room-joined message');
-        // Deduplicate peers list from server
         const uniquePeers = Array.from(new Map((message.peers || []).map(p => [p.ghostId, p])).values());
         setPeers(uniquePeers);
         console.log('[Room] Room joined with peers:', uniquePeers.map(p => p.ghostId));
         
-        // BUG FIX 10: Wait for local stream before creating peer connections
         const ensureStreamThenCreatePeer = async () => {
           let attempts = 0;
-          while (!webRTC.localStreamRef.current && attempts < 100) {
+          while (!rtc.localStreamRef.current && attempts < 100) {
             await new Promise(r => setTimeout(r, 100));
             attempts++;
           }
-          if (webRTC.localStreamRef.current) {
+          if (rtc.localStreamRef.current) {
             console.log('[Room] Local stream ready, creating peer connections');
           } else {
             console.warn('[Room] Local stream not available after', attempts * 100, 'ms - creating peer connections anyway');
           }
           
           uniquePeers.forEach(peer => {
-            // BUG FIX 4: Deterministic initiator - peer with SMALLER ghostId initiates
             const isInitiator = ghostId < peer.ghostId;
             console.log('[Room] Peer connection initiator rule: myGhostId=', ghostId, 'theirGhostId=', peer.ghostId, 'isInitiator=', isInitiator);
-            if (webRTC && signalingRef.current) {
+            if (rtc && signalingRef.current) {
               try {
-                webRTC.createPeerConnection(peer.ghostId, isInitiator);
+                rtc.createPeerConnection(peer.ghostId, isInitiator);
               } catch (err) {
                 console.error('[Room] ❌ Failed to create peer connection for', peer.ghostId, ':', err.message);
               }
@@ -126,16 +134,14 @@ export function Room() {
         break;
 
       case 'peer-joined':
-        // BUG FIX 10: Wait for local stream before creating peer connections
         const ensureStreamForNewPeer = async () => {
           let attempts = 0;
-          while (!webRTC.localStreamRef.current && attempts < 100) {
+          while (!rtc.localStreamRef.current && attempts < 100) {
             await new Promise(r => setTimeout(r, 100));
             attempts++;
           }
           
           setPeers(prev => {
-            // Check if peer already exists to avoid duplicates
             const exists = prev.some(p => p.ghostId === message.peerId);
             if (exists) {
               console.log('[Room] Peer already in list, skipping duplicate:', message.peerId);
@@ -148,12 +154,11 @@ export function Room() {
             }];
           });
           
-          // BUG FIX 4: Deterministic initiator - peer with SMALLER ghostId initiates
           const isInitiator = ghostId < message.peerId;
           console.log('[Room] Peer-joined initiator rule: myGhostId=', ghostId, 'theirGhostId=', message.peerId, 'isInitiator=', isInitiator);
-          if (webRTC && signalingRef.current) {
+          if (rtc && signalingRef.current) {
             try {
-              webRTC.createPeerConnection(message.peerId, isInitiator);
+              rtc.createPeerConnection(message.peerId, isInitiator);
             } catch (err) {
               console.error('[Room] ❌ Failed to create peer connection for', message.peerId, ':', err.message);
             }
@@ -165,19 +170,19 @@ export function Room() {
 
       case 'peer-left':
         setPeers(prev => prev.filter(p => p.ghostId !== message.peerId));
-        webRTC.handlePeerLeft(message.peerId);
+        rtc.handlePeerLeft(message.peerId);
         break;
 
       case 'offer':
-        webRTC.handleOffer(message.fromPeerId, message.sdp);
+        rtc.handleOffer(message.fromPeerId, message.sdp);
         break;
 
       case 'answer':
-        webRTC.handleAnswer(message.fromPeerId, message.sdp);
+        rtc.handleAnswer(message.fromPeerId, message.sdp);
         break;
 
       case 'ice-candidate':
-        webRTC.handleIceCandidate(message.fromPeerId, message.candidate);
+        rtc.handleIceCandidate(message.fromPeerId, message.candidate);
         break;
 
       case 'chat-message':
@@ -204,7 +209,9 @@ export function Room() {
       default:
         break;
     }
-  }, [ghostId, webRTC, navigate]);
+  // webRTCRef.current is always current — no need to list webRTC as a dep.
+  // ghostId and navigate are the only real reactive values here.
+  }, [ghostId, navigate]);
 
   // Signaling hook
   const { send: signalingsSend, connectionState } = useSignaling(token, handleSignalingMessage);
@@ -217,27 +224,23 @@ export function Room() {
   // Effects - ALL FOURTH
   // CRITICAL: Initialize stream FIRST before any other operations
   useEffect(() => {
-    // Guard MUST be synchronous and checked FIRST
     if (streamInitializedRef.current) {
       console.log('[Room] Stream already initialized, skipping');
       return;
     }
     
-    // Mark as initializing IMMEDIATELY to prevent race conditions
     streamInitializedRef.current = 'initializing';
     
     const initStream = async () => {
       console.log('[Room] 🔴 PRIORITY 1: Initializing local stream BEFORE room join');
       try {
-        const stream = await webRTC.initializeLocalStream();
+        const stream = await webRTCRef.current.initializeLocalStream();
         if (!stream) {
           console.warn('[Room] ⚠️ Camera/microphone access denied - continuing in dev mode');
           streamInitializedRef.current = true;
         } else {
-          if (waitingVideoRef.current && peers.length === 0) {
-            waitingVideoRef.current.srcObject = stream;
-          }
           streamInitializedRef.current = true;
+          setLocalStreamReady(true); // Triggers re-render so <video> mounts and srcObject is assigned
           console.log('[Room] ✅ Local stream ready:', stream.getTracks().map(t => t.kind).join(', '));
         }
       } catch (err) {
@@ -249,7 +252,9 @@ export function Room() {
     if (isLoaded) {
       initStream();
     }
-  }, [isLoaded, webRTC]);
+  // webRTC intentionally excluded — accessed via webRTCRef.current which is always current.
+  // isLoaded is the only dep that should re-trigger this (it gates getUserMedia).
+  }, [isLoaded]);
 
   useEffect(() => {
     const joinRoomFn = async () => {
@@ -276,23 +281,27 @@ export function Room() {
     joinRoomFn();
   }, [roomId, routeRoomId, navigate, isLoaded, token]);
 
+  // Reset the join-room guard whenever roomId changes so a new room always sends join-room.
+  useEffect(() => {
+    if (roomId) {
+      joinRoomSentRef.current = false;
+      console.log('[Room] New roomId detected, resetting joinRoomSentRef');
+    }
+  }, [roomId]);
+
   useEffect(() => {
     console.log('[Room] Join-room effect check:', {
       roomId: roomId ? roomId.substring(0, 8) : 'NO',
       streamReady: streamInitializedRef.current === true,
-      localStreamExists: webRTC.localStreamRef.current ? 'YES' : 'NO',
+      localStreamExists: webRTCRef.current?.localStreamRef.current ? 'YES' : 'NO',
       signalingsSend: signalingsSend ? 'YES' : 'NO',
       connectionState,
       alreadySent: joinRoomSentRef.current,
       shouldSend: roomId && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current
     });
     
-    // CRITICAL: Send join-room IMMEDIATELY when room is assigned and WebSocket connected
-    // Stream initialization happens in PARALLEL, not as a blocker
-    // The stream is needed for peer connections, NOT for the signaling join-room message
     if (roomId && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current) {
       console.log('[Room] 🟢 PRIORITY 2: Sending join-room to get paired with peers (stream initializes in parallel)');
-      console.log('[Room] Stream status: initialized?', streamInitializedRef.current === true, ', stream exists?', !!webRTC.localStreamRef.current);
       
       joinRoomSentRef.current = true;
       signalingsSend({
@@ -306,7 +315,8 @@ export function Room() {
       if (connectionState !== 'connected') console.log('[Room] ✗ connectionState not connected:', connectionState);
       if (joinRoomSentRef.current) console.log('[Room] ✗ join-room already sent');
     }
-  }, [roomId, signalingsSend, connectionState, webRTC]);
+  // webRTC removed from deps — was causing this to re-run every render.
+  }, [roomId, signalingsSend, connectionState]);
 
   // DISABLED: Auto-countdown when peers.length === 0 was breaking pairing
   // Devices would hangup within 3 seconds before peer-joined arrives
@@ -427,9 +437,16 @@ export function Room() {
             // Waiting state
             <div className="w-full h-full flex items-center justify-center">
               <div className="relative w-full max-w-md aspect-video rounded-2xl overflow-hidden ring-2 ring-[#F4600C]/30 bg-black">
-                {webRTC.localStreamRef.current && (
+                {/* Gate on localStreamReady state (not the ref) so React re-renders when stream arrives */}
+                {localStreamReady && (
                   <video
-                    ref={waitingVideoRef}
+                    ref={(el) => {
+                      waitingVideoRef.current = el;
+                      // Assign srcObject as soon as the element mounts
+                      if (el && webRTCRef.current?.localStreamRef.current) {
+                        el.srcObject = webRTCRef.current.localStreamRef.current;
+                      }
+                    }}
                     autoPlay
                     muted
                     playsInline
@@ -459,8 +476,8 @@ export function Room() {
             <div
               className={`w-full h-full gap-3 grid ${videoGridClass} auto-rows-fr min-h-0`}
             >
-              {/* Local video */}
-              {webRTC.localStreamRef.current && (
+              {/* Local video - gate on localStreamReady state so tile mounts after getUserMedia */}
+              {localStreamReady && (
                 <VideoTile
                   key={`local-${ghostId}`}
                   stream={webRTC.localStreamRef.current}

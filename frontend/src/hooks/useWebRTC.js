@@ -315,6 +315,14 @@ export function useWebRTC(signalingRef) {
     peerConnectionsRef.current.set(peerId, pc);
     console.log('[WebRTC] Peer connection stored for', peerId);
 
+    // Drain ICE candidates that arrived before this peer connection was created.
+    // These were queued by handleIceCandidate when pc didn't exist yet.
+    // Note: remote description is still not set here, so drainIceCandidates
+    // will queue them internally again until setRemoteDescription is called.
+    if (iceCandidateQueues.current[peerId]?.length > 0) {
+      console.log('[WebRTC] Found', iceCandidateQueues.current[peerId].length, 'pre-creation ICE candidates for', peerId, '- they will drain after remote description is set');
+    }
+
     // BUG FIX: If initiator but no tracks (dev mode), manually create offer
     // onnegotiationneeded won't fire without tracks, so we need to trigger manually
     if (isInitiator && !localStreamRef.current) {
@@ -363,7 +371,15 @@ export function useWebRTC(signalingRef) {
   const handleIceCandidate = useCallback(async (fromPeerId, candidate) => {
     const pc = peerConnectionsRef.current.get(fromPeerId);
     if (!pc) {
-      console.warn('[WebRTC] Received ICE candidate for unknown peer:', fromPeerId);
+      // Peer connection doesn't exist yet — queue the candidate.
+      // This happens when the remote sends ICE immediately after the offer
+      // but our createPeerConnection hasn't run yet (offer handling is async).
+      // Previously this dropped the candidate silently, breaking ICE negotiation.
+      console.log('[WebRTC] No peer connection yet for', fromPeerId, '- queuing ICE candidate for pre-creation');
+      if (!iceCandidateQueues.current[fromPeerId]) {
+        iceCandidateQueues.current[fromPeerId] = [];
+      }
+      iceCandidateQueues.current[fromPeerId].push(candidate);
       return;
     }
 
@@ -529,10 +545,18 @@ export function useWebRTC(signalingRef) {
       }
     }
 
-    // Guard: Don't reinitialize if already initialized
+    // Guard: Don't reinitialize if already initialized with LIVE tracks.
+    // Must check readyState — hangUp() stops tracks but does NOT null the ref,
+    // so getTracks().length > 0 alone would return a dead stream.
     if (localStreamRef.current && localStreamRef.current.getTracks().length > 0) {
-      console.log('[WebRTC] Local stream already initialized, reusing');
-      return localStreamRef.current;
+      const allLive = localStreamRef.current.getTracks().every(t => t.readyState === 'live');
+      if (allLive) {
+        console.log('[WebRTC] Local stream already initialized, reusing');
+        return localStreamRef.current;
+      }
+      // Tracks are ended (hangUp was called) — null the ref and re-initialize
+      console.log('[WebRTC] Local stream tracks are ended, re-initializing...');
+      localStreamRef.current = null;
     }
 
     streamInitializingRef.current = true;
@@ -745,13 +769,17 @@ export function useWebRTC(signalingRef) {
     });
     peerConnectionsRef.current.clear();
 
-    // Stop all local tracks but keep the ref for reuse
+    // Stop all local tracks and NULL the ref.
+    // CRITICAL: Must null localStreamRef after stopping tracks.
+    // If we keep the ref, initializeLocalStream's guard (getTracks().length > 0)
+    // returns the dead stream — tracks are stopped but the array is still populated.
+    // Nulling forces a fresh getUserMedia on the next initializeLocalStream call.
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => {
         console.log('[WebRTC] Stopping track:', track.kind);
         track.stop();
       });
-      // Don't set to null - keep the stream for reuse if peer returns
+      localStreamRef.current = null;
     }
 
     // Clear audio analysers
