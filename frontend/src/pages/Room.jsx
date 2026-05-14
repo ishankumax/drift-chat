@@ -308,11 +308,15 @@ export function Room() {
     }
   }, [roomId, signalingsSend, connectionState, webRTC]);
 
-  useEffect(() => {
-    if (roomModeRef.current === 'random' && peers.length === 0 && nextStrangerCountdown === null) {
-      setNextStrangerCountdown(3);
-    }
-  }, [peers.length]);
+  // DISABLED: Auto-countdown when peers.length === 0 was breaking pairing
+  // Devices would hangup within 3 seconds before peer-joined arrives
+  // Instead, peers naturally arrive via peer-joined messages or connection timeout
+  // Users can manually request "next stranger" if connection takes too long
+  // useEffect(() => {
+  //   if (roomModeRef.current === 'random' && peers.length === 0 && nextStrangerCountdown === null) {
+  //     setNextStrangerCountdown(3);
+  //   }
+  // }, [peers.length]);
 
   useEffect(() => {
     if (nextStrangerCountdown === null) return;
