@@ -5,6 +5,7 @@ class InMemoryRedis {
     this.data = new Map(); // string keys -> values
     this.hashes = new Map(); // hash keys -> Map of field -> value
     this.sets = new Map(); // set keys -> Set of members
+    this.lists = new Map(); // list keys -> Array (for LPUSH/LPOP/RPUSH/RPOP)
   }
 
   async set(key, value) {
@@ -22,6 +23,7 @@ class InMemoryRedis {
       if (this.data.delete(key)) count++;
       if (this.hashes.delete(key)) count++;
       if (this.sets.delete(key)) count++;
+      if (this.lists.delete(key)) count++;
     });
     return count;
   }
@@ -113,6 +115,59 @@ class InMemoryRedis {
   async smembers(key) {
     const set = this.sets.get(key);
     return set ? Array.from(set) : [];
+  }
+
+  // LIST OPERATIONS: lpush, lpop, rpush, rpop
+  async lpush(key, ...values) {
+    if (!this.lists.has(key)) {
+      this.lists.set(key, []);
+    }
+    const list = this.lists.get(key);
+    // LPUSH adds to front of list
+    list.unshift(...values);
+    return list.length;
+  }
+
+  async lpop(key) {
+    const list = this.lists.get(key);
+    if (!list || list.length === 0) return null;
+    // LPOP removes from front
+    return list.shift();
+  }
+
+  async rpush(key, ...values) {
+    if (!this.lists.has(key)) {
+      this.lists.set(key, []);
+    }
+    const list = this.lists.get(key);
+    // RPUSH adds to end
+    list.push(...values);
+    return list.length;
+  }
+
+  async rpop(key) {
+    const list = this.lists.get(key);
+    if (!list || list.length === 0) return null;
+    // RPOP removes from end
+    return list.pop();
+  }
+
+  async llen(key) {
+    const list = this.lists.get(key);
+    return list ? list.length : 0;
+  }
+
+  async lrange(key, start, stop) {
+    const list = this.lists.get(key);
+    if (!list) return [];
+    // Handle negative indices like Redis does
+    const len = list.length;
+    let s = start < 0 ? len + start : start;
+    let e = stop < 0 ? len + stop : stop;
+    s = Math.max(0, s);
+    e = Math.min(len - 1, e);
+    if (s > e) return [];
+    return list.slice(s, e + 1);
   }
 
   async expire(key, seconds) {
