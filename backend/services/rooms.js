@@ -29,9 +29,9 @@ async function createRoom(redis, mode) {
     await redis.set(`roomcode:${roomCode}`, roomId);
     await redis.expire(`roomcode:${roomCode}`, 7200);
     
-    // For random rooms, add to waiting_rooms set so they can be found quickly
+    // For random rooms, add to waiting_rooms list (LPUSH for atomic LPOP later)
     if (mode === 'random') {
-      await redis.sadd('waiting_rooms', roomId);
+      await redis.lpush('waiting_rooms', roomId);
       await redis.expire('waiting_rooms', 7200);
     }
     
@@ -86,33 +86,47 @@ async function joinRoom(redis, roomId, ghostId) {
 
 async function findWaitingRoom(redis) {
   try {
-    // Use a more direct approach: maintain a "waiting_rooms" set in Redis
-    // This is more efficient and reliable than scanning all room keys
-    const waitingRoomIds = await redis.smembers('waiting_rooms');
+    // BUG FIX: Use LPOP for atomic room assignment - prevents race conditions
+    // LPOP is atomic: only ONE caller gets the room, no duplicates
+    const roomId = await redis.lpop('waiting_rooms');
     
-    for (const roomId of waitingRoomIds) {
-      const roomData = await redis.hgetall(`room:${roomId}`);
-      if (roomData && roomData.roomCode && roomData.status === 'waiting' && roomData.mode === 'random') {
-        let peers = [];
-        try {
-          peers = JSON.parse(roomData.peers || '[]');
-        } catch (e) {
-          peers = [];
-        }
-        
-        // Found a room with exactly 1 peer waiting
-        if (peers.length === 1) {
-          // Try to atomically remove from waiting_rooms set
-          const removed = await redis.srem('waiting_rooms', roomId);
-          if (removed) {
-            console.log(`[ROOMS] Found waiting room ${roomId} with ${peers.length} peer(s)`);
-            return { roomId, roomCode: roomData.roomCode };
-          }
-        }
-      }
+    if (!roomId) {
+      console.log('[ROOMS] No waiting rooms in queue');
+      return null;
     }
-    
-    console.log('[ROOMS] No waiting rooms found, will create new room');
+
+    // Verify room still exists and has exactly 1 peer
+    const roomData = await redis.hgetall(`room:${roomId}`);
+    if (!roomData || !roomData.roomCode) {
+      console.log(`[ROOMS] Room ${roomId} no longer exists after LPOP`);
+      return null;
+    }
+
+    let peers = [];
+    try {
+      peers = JSON.parse(roomData.peers || '[]');
+    } catch (e) {
+      peers = [];
+    }
+
+    // Verify room has exactly 1 peer and is in waiting state
+    if (peers.length === 1 && roomData.mode === 'random' && roomData.status === 'waiting') {
+      console.log(`[ROOMS] ✅ Found valid waiting room ${roomId} with 1 peer (LPOP atomic)`);
+      return { roomId, roomCode: roomData.roomCode };
+    }
+
+    // Room doesn't meet criteria - put it back for other callers
+    if (peers.length === 1 && roomData.mode === 'random') {
+      console.log(`[ROOMS] Room ${roomId} has 1 peer but wrong status, returning to queue`);
+      await redis.lpush('waiting_rooms', roomId);
+    } else if (peers.length === 0 && roomData.mode === 'random') {
+      console.log(`[ROOMS] Room ${roomId} has 0 peers, returning to queue`);
+      await redis.lpush('waiting_rooms', roomId);
+    } else {
+      console.log(`[ROOMS] Room ${roomId} doesn't match waiting criteria (peers=${peers.length}, mode=${roomData.mode})`);
+    }
+
+    console.log('[ROOMS] No valid waiting rooms found, will create new room');
     return null;
   } catch (err) {
     console.error('[ROOMS] Error finding waiting room:', err.message);
@@ -140,9 +154,11 @@ async function leaveRoom(redis, roomId, ghostId) {
     if (peers.length === 0) {
       await redis.del(`room:${roomId}`);
       await redis.del(`roomcode:${roomData.roomCode}`);
-      await redis.srem('waiting_rooms', roomId);
+      // Don't need to remove from waiting_rooms - it's a list, not a set
+      console.log(`[ROOMS] ✅ Deleted empty room ${roomId}`);
     } else if (roomData.mode === 'random' && peers.length === 1) {
-      await redis.sadd('waiting_rooms', roomId);
+      await redis.lpush('waiting_rooms', roomId);
+      console.log(`[ROOMS] ✅ Room ${roomId} back to waiting (1 peer left)`);
     }
   } catch (err) {
     console.error('[ROOMS] Error leaving room:', err.message);
