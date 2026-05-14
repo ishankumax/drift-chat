@@ -450,7 +450,7 @@ export function Room() {
           ) : (
             // Video grid with responsive layout - supports 1-on-1 and group calls
             <div
-              className={`w-full flex-1 gap-3 grid ${videoGridClass} auto-rows-fr`}
+              className={`w-full h-full gap-3 grid ${videoGridClass} auto-rows-fr min-h-0`}
             >
               {/* Local video */}
               {webRTC.localStreamRef.current && (
