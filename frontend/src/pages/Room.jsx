@@ -407,7 +407,7 @@ export function Room() {
       <div className={`flex-1 flex overflow-hidden gap-0 ${isGroupCall ? 'flex-col' : ''}`}>
         
         {/* LEFT/TOP: Video Grid */}
-        <div className={`${isGroupCall ? 'w-full' : 'flex-1'} overflow-hidden p-4 bg-[#1A1A0F] flex flex-col`}>
+        <div className={`${isGroupCall ? 'w-full' : 'flex-1'} overflow-hidden p-4 bg-[#1A1A0F] flex flex-col min-h-0`}>
           {remoteCount === 0 ? (
             // Waiting state
             <div className="w-full h-full flex items-center justify-center">
@@ -442,7 +442,7 @@ export function Room() {
           ) : (
             // Video grid with responsive layout - supports 1-on-1 and group calls
             <div
-              className={`w-full h-full gap-3 grid ${videoGridClass}`}
+              className={`w-full flex-1 gap-3 grid ${videoGridClass} auto-rows-fr`}
             >
               {/* Local video */}
               {webRTC.localStreamRef.current && (

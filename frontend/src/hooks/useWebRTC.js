@@ -19,16 +19,36 @@ export function useWebRTC(signalingRef) {
   // Get ICE servers from environment or defaults
   const getIceServers = useCallback(() => {
     const servers = [
-      { urls: import.meta.env.VITE_STUN_URL || 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' }
     ];
-    if (import.meta.env.VITE_TURN_URL) {
-      servers.push({
-        urls: import.meta.env.VITE_TURN_URL,
-        username: import.meta.env.VITE_TURN_USERNAME,
-        credential: import.meta.env.VITE_TURN_CREDENTIAL,
-      });
+    
+    // Add custom STUN if provided
+    if (import.meta.env.VITE_STUN_URL) {
+      servers.unshift({ urls: import.meta.env.VITE_STUN_URL });
     }
+    
+    // Add TURN server with proper format
+    if (import.meta.env.VITE_TURN_URL) {
+      const turnUrl = import.meta.env.VITE_TURN_URL;
+      const username = import.meta.env.VITE_TURN_USERNAME;
+      const credential = import.meta.env.VITE_TURN_CREDENTIAL;
+      
+      if (username && credential) {
+        // Format: turn:host:port or turn:host:port?transport=tcp
+        servers.push({
+          urls: [turnUrl, `${turnUrl}?transport=tcp`],
+          username,
+          credential
+        });
+        console.log('[WebRTC] Added TURN server:', turnUrl);
+      }
+    }
+    
+    console.log('[WebRTC] ICE servers configured:', servers.length, 'servers');
     return servers;
   }, []);
 
@@ -143,10 +163,27 @@ export function useWebRTC(signalingRef) {
 
     pc.oniceconnectionstatechange = () => {
       console.log('[WebRTC] ICE connection state for', peerId, ':', pc.iceConnectionState);
+      
+      // Log connection diagnostics
+      if (pc.iceConnectionState === 'failed') {
+        console.error('[WebRTC] ❌ ICE connection FAILED for', peerId);
+        console.error('[WebRTC] Possible causes:');
+        console.error('  - TURN server unreachable or misconfigured');
+        console.error('  - Firewall/NAT blocking P2P connection');
+        console.error('  - Both devices on restrictive networks');
+      } else if (pc.iceConnectionState === 'connected') {
+        console.log('[WebRTC] ✓ ICE connection ESTABLISHED for', peerId);
+      }
     };
 
     pc.onconnectionstatechange = () => {
       console.log('[WebRTC] Connection state for', peerId, ':', pc.connectionState);
+      
+      if (pc.connectionState === 'failed') {
+        console.error('[WebRTC] ❌ Peer connection FAILED for', peerId);
+      } else if (pc.connectionState === 'connected') {
+        console.log('[WebRTC] ✓ Peer connection ESTABLISHED for', peerId);
+      }
     };
 
     // BUG FIX 2: onnegotiationneeded with re-entrancy guard
