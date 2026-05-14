@@ -113,7 +113,11 @@ export function Room() {
             const isInitiator = ghostId < peer.ghostId;
             console.log('[Room] Peer connection initiator rule: myGhostId=', ghostId, 'theirGhostId=', peer.ghostId, 'isInitiator=', isInitiator);
             if (webRTC && signalingRef.current) {
-              webRTC.createPeerConnection(peer.ghostId, isInitiator);
+              try {
+                webRTC.createPeerConnection(peer.ghostId, isInitiator);
+              } catch (err) {
+                console.error('[Room] ❌ Failed to create peer connection for', peer.ghostId, ':', err.message);
+              }
             }
           });
         };
@@ -148,7 +152,11 @@ export function Room() {
           const isInitiator = ghostId < message.peerId;
           console.log('[Room] Peer-joined initiator rule: myGhostId=', ghostId, 'theirGhostId=', message.peerId, 'isInitiator=', isInitiator);
           if (webRTC && signalingRef.current) {
-            webRTC.createPeerConnection(message.peerId, isInitiator);
+            try {
+              webRTC.createPeerConnection(message.peerId, isInitiator);
+            } catch (err) {
+              console.error('[Room] ❌ Failed to create peer connection for', message.peerId, ':', err.message);
+            }
           }
         };
         

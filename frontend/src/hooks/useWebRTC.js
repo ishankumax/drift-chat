@@ -40,6 +40,8 @@ export function useWebRTC(signalingRef) {
       const username = import.meta.env.VITE_TURN_USERNAME;
       const credential = import.meta.env.VITE_TURN_CREDENTIAL;
       
+      console.log('[WebRTC] TURN config check:', { turnUrl, username: !!username, credential: !!credential });
+      
       // Parse URL to extract host and port
       let host = turnUrl;
       if (turnUrl.startsWith('turn:')) {
@@ -48,35 +50,33 @@ export function useWebRTC(signalingRef) {
         host = turnUrl.substring(6);
       }
       
-      // Build TURN config based on whether we have auth credentials
+      // Only add TURN if properly configured
       if (username && credential) {
         // Authenticated TURN (e.g., metered.ca) - use different ports per transport
-        // Parse to check if port is specified
         const hasPort = host.includes(':');
         const [hostOnly, port] = hasPort ? host.split(':') : [host, '443'];
         
         servers.push({
           urls: [
-            `turn:${hostOnly}:3478?transport=udp`,      // UDP on standard TURN port
-            `turn:${hostOnly}:80?transport=tcp`,         // TCP on HTTP port
-            `turns:${hostOnly}:${port}?transport=tcp`    // TLS on specified port (443)
+            `turn:${hostOnly}:3478?transport=udp`,
+            `turn:${hostOnly}:80?transport=tcp`,
+            `turns:${hostOnly}:${port}?transport=tcp`
           ],
           username,
           credential
         });
         
-        console.log('[WebRTC] Added authenticated TURN servers:', {
-          host: hostOnly,
-          ports: ['3478 (UDP)', '80 (TCP)', `${port} (TLS)`],
-          username
-        });
-      } else {
-        // Public/free TURN (e.g., Google) - no auth needed
+        console.log('[WebRTC] ✅ Added authenticated TURN:', { hostOnly, ports: ['3478', '80', port] });
+      } else if (turnUrl.includes('google')) {
+        // Google public TURN - no auth needed, just add STUN-like
+        // Don't add TURN scheme prefix, pass raw host
         servers.push({
-          urls: [`turn:${host}`, `turns:${host}`]
+          urls: [`turn:${host}`]
         });
-        
-        console.log('[WebRTC] Added public TURN server (no auth):', host);
+        console.log('[WebRTC] ✅ Added Google TURN (public, no auth):', host);
+      } else {
+        // Unspecified TURN without auth - skip to avoid browser error
+        console.warn('[WebRTC] ⚠️ TURN config incomplete (missing username/credential) - skipping TURN, using STUN only');
       }
     }
     
@@ -117,8 +117,10 @@ export function useWebRTC(signalingRef) {
 
     console.log('[WebRTC] Creating peer connection for', peerId, ', initiator:', isInitiator);
 
-    const iceServers = getIceServers();
-    const pc = new RTCPeerConnection({ iceServers });
+    try {
+      const iceServers = getIceServers();
+      const pc = new RTCPeerConnection({ iceServers });
+      console.log('[WebRTC] ✅ RTCPeerConnection created successfully for', peerId);
 
     // Initialize negotiating flag for this peer
     isNegotiatingRef.current[peerId] = false;
@@ -349,6 +351,15 @@ export function useWebRTC(signalingRef) {
     }
 
     return pc;
+    } catch (err) {
+      console.error('[WebRTC] ❌ CRITICAL ERROR creating peer connection for', peerId, ':', err.name, err.message);
+      console.error('[WebRTC] Full error:', err);
+      if (err.name === 'InvalidAccessError') {
+        console.error('[WebRTC] This is usually caused by invalid ICE server configuration');
+        console.error('[WebRTC] Check TURN URL, username, and credential configuration');
+      }
+      throw err; // Re-throw so caller knows creation failed
+    }
   }, [getIceServers, signalingRef]);
 
   // BUG FIX 3: Queue ICE candidates if remote description not set
