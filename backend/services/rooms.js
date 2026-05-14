@@ -29,11 +29,8 @@ async function createRoom(redis, mode) {
     await redis.set(`roomcode:${roomCode}`, roomId);
     await redis.expire(`roomcode:${roomCode}`, 7200);
     
-    // For random rooms, add to waiting_rooms list (LPUSH for atomic LPOP later)
-    if (mode === 'random') {
-      await redis.lpush('waiting_rooms', roomId);
-      await redis.expire('waiting_rooms', 7200);
-    }
+    // CRITICAL: Don't add to waiting_rooms yet - wait until first peer joins
+    // This prevents findWaitingRoom() from finding empty rooms
     
     console.log(`[ROOMS] Created new ${mode} room: ${roomId} (code: ${roomCode})`);
     return { roomId, roomCode };
@@ -109,21 +106,12 @@ async function findWaitingRoom(redis) {
       peers = [];
     }
 
-    // Verify room has exactly 1 peer and is in waiting state
+    // CRITICAL: Accept rooms with exactly 1 peer (waiting for 2nd peer to join)
     if (peers.length === 1 && roomData.mode === 'random' && roomData.status === 'waiting') {
       console.log(`[ROOMS] ✅ Found valid waiting room ${roomId} with 1 peer (LPOP atomic)`);
       return { roomId, roomCode: roomData.roomCode };
-    }
-
-    // Room doesn't meet criteria - put it back for other callers
-    if (peers.length === 1 && roomData.mode === 'random') {
-      console.log(`[ROOMS] Room ${roomId} has 1 peer but wrong status, returning to queue`);
-      await redis.lpush('waiting_rooms', roomId);
-    } else if (peers.length === 0 && roomData.mode === 'random') {
-      console.log(`[ROOMS] Room ${roomId} has 0 peers, returning to queue`);
-      await redis.lpush('waiting_rooms', roomId);
     } else {
-      console.log(`[ROOMS] Room ${roomId} doesn't match waiting criteria (peers=${peers.length}, mode=${roomData.mode})`);
+      console.log(`[ROOMS] Room ${roomId} doesn't meet criteria (peers=${peers.length}, mode=${roomData.mode}, status=${roomData.status})`);
     }
 
     console.log('[ROOMS] No valid waiting rooms found, will create new room');

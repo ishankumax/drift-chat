@@ -38,6 +38,13 @@ router.post('/join', async (req, res) => {
       const joinResult = await roomsService.joinRoom(req.redis, roomId, ghostId);
       peers = joinResult.peers;
       console.log(`[API] Room ${roomId} now has ${peers.length} peer(s): ${JSON.stringify(peers)}`);
+      
+      // CRITICAL FIX: Add room to waiting_rooms AFTER first peer joins (not when created)
+      // This ensures findWaitingRoom() always finds rooms with exactly 1 peer
+      if (peers.length === 1) {
+        await req.redis.lpush('waiting_rooms', roomId);
+        console.log(`[API] ✅ Added room ${roomId} to waiting_rooms queue (now has 1 peer)`);
+      }
     } else if (mode === 'group') {
       if (roomCode) {
         // Join existing room by code
