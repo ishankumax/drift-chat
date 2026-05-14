@@ -284,19 +284,15 @@ export function Room() {
       signalingsSend: signalingsSend ? 'YES' : 'NO',
       connectionState,
       alreadySent: joinRoomSentRef.current,
-      shouldSend: roomId && streamInitializedRef.current === true && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current
+      shouldSend: roomId && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current
     });
     
-    // CRITICAL: Wait for stream to be initialized before sending join-room
-    if (streamInitializedRef.current !== true) {
-      console.log('[Room] ⏳ Waiting for stream initialization... current state:', streamInitializedRef.current);
-      return;
-    }
-
-    // Only send join-room when ALL conditions are met
+    // CRITICAL: Send join-room IMMEDIATELY when room is assigned and WebSocket connected
+    // Stream initialization happens in PARALLEL, not as a blocker
+    // The stream is needed for peer connections, NOT for the signaling join-room message
     if (roomId && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current) {
-      console.log('[Room] 🟢 PRIORITY 2: Sending join-room (stream ready + WebSocket connected)');
-      console.log('[Room] Local stream tracks:', webRTC.localStreamRef.current?.getTracks().length || 0);
+      console.log('[Room] 🟢 PRIORITY 2: Sending join-room to get paired with peers (stream initializes in parallel)');
+      console.log('[Room] Stream status: initialized?', streamInitializedRef.current === true, ', stream exists?', !!webRTC.localStreamRef.current);
       
       joinRoomSentRef.current = true;
       signalingsSend({
@@ -306,7 +302,6 @@ export function Room() {
       console.log('[Room] ✅ join-room message sent');
     } else {
       if (!roomId) console.log('[Room] ✗ No roomId yet');
-      if (streamInitializedRef.current !== true) console.log('[Room] ✗ Stream not ready');
       if (!signalingsSend) console.log('[Room] ✗ signalingsSend not ready');
       if (connectionState !== 'connected') console.log('[Room] ✗ connectionState not connected:', connectionState);
       if (joinRoomSentRef.current) console.log('[Room] ✗ join-room already sent');
