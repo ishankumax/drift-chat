@@ -1,4 +1,4 @@
-// Fixes stale callback closure and adds heartbeat ping/pong
+// WebSocket signaling hook with proper lifecycle management
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 const WS_URL = import.meta.env.VITE_WS_URL;
@@ -8,139 +8,126 @@ export function useSignaling(token, onMessage) {
   const reconnectTimerRef = useRef(null);
   const heartbeatTimerRef = useRef(null);
   const reconnectAttemptsRef = useRef(0);
-  const onMessageRef = useRef(onMessage); // Store latest callback in ref to prevent stale closures
+  const tokenRef = useRef(token);
+  const onMessageRef = useRef(onMessage);
+  const isCleaningUpRef = useRef(false);
   const [connectionState, setConnectionState] = useState('disconnected');
-  const isCleaningUpRef = useRef(false); // Prevent reconnect during cleanup
 
-  // Update ref whenever onMessage changes (but don't trigger reconnect)
+  // Keep refs in sync
+  useEffect(() => {
+    tokenRef.current = token;
+  }, [token]);
+
   useEffect(() => {
     onMessageRef.current = onMessage;
   }, [onMessage]);
 
-  const disconnect = useCallback(() => {
-    isCleaningUpRef.current = true;
-    
-    if (wsRef.current) {
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-    if (heartbeatTimerRef.current) {
-      clearInterval(heartbeatTimerRef.current);
-      heartbeatTimerRef.current = null;
-    }
-    setConnectionState('disconnected');
-    isCleaningUpRef.current = false;
-  }, []);
-
   const setupHeartbeat = useCallback((ws) => {
-    // Clean up old heartbeat if exists
     if (heartbeatTimerRef.current) {
       clearInterval(heartbeatTimerRef.current);
     }
     
-    // Send ping every 30 seconds
     heartbeatTimerRef.current = setInterval(() => {
       if (ws && ws.readyState === 1) {
         try {
-          console.log('[WS] Sending ping');
+          console.log('[WS] Sending heartbeat');
           ws.send(JSON.stringify({ type: 'ping' }));
         } catch (err) {
-          console.error('[WS] Error sending ping:', err.message);
+          console.error('[WS] Heartbeat error:', err.message);
         }
       }
     }, 30000);
   }, []);
 
   const connect = useCallback(() => {
+    // Skip if already connected
+    if (wsRef.current && wsRef.current.readyState <= 1) {
+      console.log('[WS] Connection exists, state:', wsRef.current.readyState);
+      return;
+    }
+
+    // Skip if cleaning up
     if (isCleaningUpRef.current) {
-      console.log('[WS] Cleanup in progress, deferring connection');
+      console.log('[WS] Skipping connect - cleanup in progress');
       return;
     }
 
-    if (!token) {
-      console.log('[WS] No token available, waiting...');
+    // Skip if no token
+    if (!tokenRef.current) {
+      console.log('[WS] No token yet');
       return;
     }
 
-    if (wsRef.current && wsRef.current.readyState === 1) {
-      return; // Already connected
-    }
-
-    if (wsRef.current && wsRef.current.readyState === 0) {
-      return; // Already connecting
-    }
+    console.log('[WS] Connecting...');
 
     try {
-      const wsUrl = `${WS_URL}/ws?token=${encodeURIComponent(token)}`;
-      console.log('[WS] Connecting to:', wsUrl.replace(token, '***'));
+      const wsUrl = `${WS_URL}/ws?token=${encodeURIComponent(tokenRef.current)}`;
+      console.log('[WS] URL:', wsUrl.substring(0, 50) + '...');
+      
       const ws = new WebSocket(wsUrl);
 
       ws.onopen = () => {
-        console.log('[WS] Connected successfully');
+        console.log('[WS] ✓ Open');
         setConnectionState('connected');
         reconnectAttemptsRef.current = 0;
-        setupHeartbeat(ws); // Start heartbeat after connection
+        setupHeartbeat(ws);
       };
 
       ws.onmessage = (event) => {
         try {
+          console.log('[WS] Received raw message:', event.data.substring(0, 100));
           const message = JSON.parse(event.data);
-          // Handle pong responses from heartbeat
+          console.log('[WS] ✓ Parsed message type:', message.type);
+          
           if (message.type === 'pong') {
             console.log('[WS] Received pong');
             return;
           }
+          
+          console.log('[WS] Forwarding to onMessage callback:', message.type);
           if (onMessageRef.current) {
             onMessageRef.current(message);
+          } else {
+            console.warn('[WS] No onMessage callback set');
           }
         } catch (err) {
-          console.error('[WS] Message parse error:', err);
+          console.error('[WS] Parse error:', err);
         }
       };
 
       ws.onclose = (event) => {
-        console.log('[WS] Closed with code:', event.code, 'reason:', event.reason);
+        console.log('[WS] Closed, code:', event.code);
         setConnectionState('disconnected');
+        wsRef.current = null;
+        
         if (heartbeatTimerRef.current) {
           clearInterval(heartbeatTimerRef.current);
           heartbeatTimerRef.current = null;
         }
         
-        // Don't reconnect if we're cleaning up
         if (isCleaningUpRef.current) {
           return;
         }
 
-        // Exponential backoff reconnection
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 16000);
-        reconnectAttemptsRef.current += 1;
+        // Exponential backoff
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+        reconnectAttemptsRef.current++;
+        console.log('[WS] Reconnect in', delay, 'ms');
         
         reconnectTimerRef.current = setTimeout(() => {
-          console.log('[WS] Attempting to reconnect (attempt', reconnectAttemptsRef.current, ')...');
           connect();
         }, delay);
       };
 
-      ws.onerror = (err) => {
-        const errorMsg = err?.message || err?.reason || 'Unknown error';
-        console.error('[WS] Error:', {
-          message: errorMsg,
-          type: err?.type,
-          code: err?.code,
-          readyState: ws?.readyState
-        });
+      ws.onerror = (event) => {
+        console.error('[WS] Error:', event.message || event);
         setConnectionState('error');
         
-        // Attempt to reconnect after error
         if (!isCleaningUpRef.current) {
-          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 16000);
-          reconnectAttemptsRef.current += 1;
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+          reconnectAttemptsRef.current++;
+          
           reconnectTimerRef.current = setTimeout(() => {
-            console.log('[WS] Reconnecting after error...');
             connect();
           }, delay);
         }
@@ -148,45 +135,64 @@ export function useSignaling(token, onMessage) {
 
       wsRef.current = ws;
     } catch (err) {
-      console.error('[WS] Connection error:', err.message);
+      console.error('[WS] Create error:', err.message);
       setConnectionState('error');
       
-      // Retry connection
       if (!isCleaningUpRef.current) {
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 16000);
-        reconnectAttemptsRef.current += 1;
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+        reconnectAttemptsRef.current++;
         reconnectTimerRef.current = setTimeout(() => {
           connect();
         }, delay);
       }
     }
-  }, [token, setupHeartbeat]);
+  }, [setupHeartbeat]);
 
+  // Connect when token available
   useEffect(() => {
-    if (token) {
+    if (tokenRef.current && !wsRef.current) {
+      console.log('[WS] Token ready, connecting');
       connect();
     }
+  }, [token, connect]);
 
+  // Cleanup
+  useEffect(() => {
     return () => {
-      disconnect();
-    };
-  }, [token, connect, disconnect]);
-
-  const send = useCallback((message) => {
-    if (wsRef.current && wsRef.current.readyState === 1) {
-      try {
-        wsRef.current.send(JSON.stringify(message));
-      } catch (err) {
-        console.error('[WS] Error sending message:', err.message);
+      console.log('[WS] Cleanup');
+      isCleaningUpRef.current = true;
+      
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
       }
-    } else {
-      console.warn('[WS] WebSocket not ready (state:', wsRef.current?.readyState, '), cannot send message');
+    };
+  }, []);
+
+  // Send function
+  const send = useCallback((message) => {
+    if (!wsRef.current) {
+      console.warn('[WS] No connection, cannot send');
+      return;
+    }
+
+    if (wsRef.current.readyState !== 1) {
+      console.warn('[WS] Not ready (state:', wsRef.current.readyState + '), cannot send:', message.type);
+      return;
+    }
+
+    try {
+      console.log('[WS] Sending:', message.type);
+      wsRef.current.send(JSON.stringify(message));
+    } catch (err) {
+      console.error('[WS] Send error:', err.message);
     }
   }, []);
 
   return {
     send,
-    connectionState,
-    disconnect
+    connectionState
   };
 }

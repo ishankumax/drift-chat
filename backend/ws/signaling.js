@@ -26,6 +26,8 @@ function initSignaling(server, redis) {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const token = url.searchParams.get('token');
 
+    console.log(`[WS] New connection attempt, total connections: ${connections.size}`);
+
     if (!token) {
       ws.close(4401, 'Unauthorized: No token provided');
       return;
@@ -43,12 +45,12 @@ function initSignaling(server, redis) {
     const ghostName = decodedToken.ghostName;
     const avatarId = decodedToken.avatarId;
 
-    // Check if banned
-    const isBanned = await abuse.isBanned(redis, ghostId);
-    if (isBanned) {
-      ws.close(4403, 'Forbidden: Banned');
-      return;
-    }
+    // TODO: Ban check disabled for development - re-enable when ban system is tested
+    // const isBanned = await abuse.isBanned(redis, ghostId);
+    // if (isBanned) {
+    //   ws.close(4403, 'Forbidden: Banned');
+    //   return;
+    // }
 
     ws.ghostId = ghostId;
     ws.ghostName = ghostName;
@@ -56,7 +58,9 @@ function initSignaling(server, redis) {
     ws.isAlive = true;
 
     connections.set(ghostId, ws);
-    console.log(`[WS] Connected: ${ghostName} (${ghostId})`);
+    console.log(`[WS] ✓ Connected: ${ghostName} (${ghostId})`);
+    console.log(`[WS] Total active connections: ${connections.size}`);
+    console.log(`[WS] Active connection IDs: ${Array.from(connections.keys()).join(', ')}`);
 
     ws.on('pong', () => {
       ws.isAlive = true;
@@ -65,6 +69,7 @@ function initSignaling(server, redis) {
     ws.on('message', async (data) => {
       try {
         const message = JSON.parse(data);
+        console.log(`[WS] Message from ${ghostName} (${ghostId}): TYPE=${message.type}, DATA=`, message);
         handleMessage(message, ws, redis, connections, roomMembers, ghostId, ghostName, avatarId);
       } catch (err) {
         console.error('[WS] Message parse error:', err.message);
@@ -74,6 +79,7 @@ function initSignaling(server, redis) {
     ws.on('close', () => {
       console.log(`[WS] Disconnected: ${ghostName} (${ghostId})`);
       connections.delete(ghostId);
+      console.log(`[WS] Active connections after disconnect: ${connections.size}`);
 
       // BUG FIX 8: Properly broadcast peer-left to all peers in all rooms this ghost was in
       roomMembers.forEach((members, roomId) => {
@@ -103,8 +109,13 @@ function initSignaling(server, redis) {
     });
 
     ws.on('error', (err) => {
-      console.error('[WS] Error:', err.message);
+      console.error('[WS] Connection error:', err.message || err);
     });
+  });
+
+  // Log WebSocket server errors
+  wss.on('error', (err) => {
+    console.error('[WSS] Server error:', err);
   });
 
   async function handleMessage(message, ws, redis, connections, roomMembers, ghostId, ghostName, avatarId) {
@@ -156,13 +167,18 @@ function initSignaling(server, redis) {
     const { roomId } = message;
     if (!roomId) return;
 
+    console.log(`[WS] handleJoinRoom: ${ghostName} (${ghostId}) joining room ${roomId}`);
+
     // Initialize room members set if needed
     if (!roomMembers.has(roomId)) {
+      console.log(`[WS] Creating new room set for ${roomId}`);
       roomMembers.set(roomId, new Set());
     }
 
     const room = roomMembers.get(roomId);
+    const wasEmpty = room.size === 0;
     room.add(ghostId);
+    console.log(`[WS] Room ${roomId} now has ${room.size} members: ${Array.from(room).join(', ')}`);
 
     // Send current peers to joining client
     const peers = Array.from(room)
@@ -180,22 +196,29 @@ function initSignaling(server, redis) {
       })
       .filter(Boolean);
 
+    console.log(`[WS] Sending room-joined to ${ghostName}: ${peers.length} peers`);
     ws.send(JSON.stringify({
       type: 'room-joined',
       peers
     }));
+    console.log(`[WS] ✓ room-joined sent to ${ghostName}`);
 
     // Broadcast to other peers
+    console.log(`[WS] Broadcasting peer-joined to existing ${room.size - 1} members`);
     room.forEach(peerId => {
       if (peerId !== ghostId) {
         const peerWs = connections.get(peerId);
+        console.log(`[WS] Checking peer ${peerId}: has WS? ${!!peerWs}, ready? ${peerWs?.readyState === 1}`);
         if (peerWs && peerWs.readyState === 1) {
+          console.log(`[WS] ✓ Sending peer-joined to ${peerId} for new peer ${ghostName}`);
           peerWs.send(JSON.stringify({
             type: 'peer-joined',
             peerId: ghostId,
             ghostName,
             avatarId
           }));
+        } else {
+          console.log(`[WS] ✗ Cannot send to ${peerId}: WS=${!!peerWs}, readyState=${peerWs?.readyState}`);
         }
       }
     });

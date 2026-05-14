@@ -208,6 +208,37 @@ export function useWebRTC(signalingRef) {
     peerConnectionsRef.current.set(peerId, pc);
     console.log('[WebRTC] Peer connection stored for', peerId);
 
+    // BUG FIX: If initiator but no tracks (dev mode), manually create offer
+    // onnegotiationneeded won't fire without tracks, so we need to trigger manually
+    if (isInitiator && !localStreamRef.current) {
+      console.log('[WebRTC] Initiator with no local stream - manually creating offer for', peerId);
+      
+      // Small delay to let peer connections initialize
+      setTimeout(async () => {
+        try {
+          if (pc.signalingState !== 'stable') {
+            console.log('[WebRTC] Signaling state not stable for', peerId, ':', pc.signalingState);
+            return;
+          }
+
+          console.log('[WebRTC] Creating offer for', peerId);
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          
+          console.log('[WebRTC] Sending offer for', peerId);
+          if (signalingRef?.current?.send) {
+            signalingRef.current.send({
+              type: 'offer',
+              targetPeerId: peerId,
+              sdp: pc.localDescription
+            });
+          }
+        } catch (err) {
+          console.error('[WebRTC] Error creating manual offer for', peerId, ':', err.message);
+        }
+      }, 50);
+    }
+
     return pc;
   }, [getIceServers, signalingRef]);
 

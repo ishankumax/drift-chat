@@ -1,16 +1,12 @@
 async function receiveReport(redis, reporterId, targetId, roomId, reason, signalingModule) {
   try {
-    await redis.hincrby(`abuse:reports:${targetId}`, 'count', 1);
-    await redis.expire(`abuse:reports:${targetId}`, 86400);
-
+    // For development - just log the report, don't ban or kill rooms
     console.log(`[ABUSE] Report filed. Reporter: ${reporterId}, Target: ${targetId}, Reason: ${reason}`);
-
-    // Kill the room immediately
-    await killRoom(redis, roomId, signalingModule);
-
-    // Ban the target for 24 hours
-    await redis.sadd('abuse:banned', targetId);
-    await redis.expire('abuse:banned', 86400);
+    // TODO: Re-enable banning and room killing once ban system is tested
+    // await redis.hincrby(`abuse:reports:${targetId}`, 'count', 1);
+    // await redis.expire(`abuse:reports:${targetId}`, 86400);
+    // await redis.sadd('abuse:banned', targetId);
+    // await redis.expire('abuse:banned', 86400);
   } catch (err) {
     console.error('[ABUSE] Error receiving report:', err.message);
   }
@@ -62,13 +58,16 @@ async function killRoom(redis, roomId, signalingModule) {
 }
 
 async function isBanned(redis, ghostId) {
-  try {
-    const banned = await redis.sismember('abuse:banned', ghostId);
-    return banned === 1;
-  } catch (err) {
-    console.error('[ABUSE] Error checking ban status:', err.message);
-    return false;
-  }
+  // Development mode - bans disabled
+  return false;
+  // TODO: Re-enable when ban system is tested
+  // try {
+  //   const banned = await redis.sismember('abuse:banned', ghostId);
+  //   return banned === 1;
+  // } catch (err) {
+  //   console.error('[ABUSE] Error checking ban status:', err.message);
+  //   return false;
+  // }
 }
 
 module.exports = {

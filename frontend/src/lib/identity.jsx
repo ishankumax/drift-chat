@@ -15,16 +15,16 @@ export function IdentityProvider({ children }) {
   useEffect(() => {
     const initializeIdentity = async () => {
       try {
-        // Check localStorage for existing token
-        const storedToken = localStorage.getItem('drift_token');
-        const authHeader = storedToken ? `Bearer ${storedToken}` : undefined;
-
+        // FOR ANONYMOUS CHAT: Each tab/window should have its own unique identity
+        // DO NOT reuse stored token - always generate fresh identity
+        // (Comment: In production, could use sessionStorage instead of localStorage for per-tab persistence)
+        
         const response = await fetch(`${import.meta.env.VITE_API_URL}/api/identity/init`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            ...(authHeader && { Authorization: authHeader })
+            'Content-Type': 'application/json'
           }
+          // IMPORTANT: NOT sending Authorization header - forces fresh identity generation
         });
 
         if (!response.ok) {
@@ -33,8 +33,8 @@ export function IdentityProvider({ children }) {
 
         const data = await response.json();
 
-        // Store token in localStorage
-        localStorage.setItem('drift_token', data.token);
+        // Store token in sessionStorage (per-tab) instead of localStorage (shared across tabs)
+        sessionStorage.setItem('drift_token', data.token);
 
         setIdentity({
           ghostId: data.ghostId,
@@ -43,6 +43,8 @@ export function IdentityProvider({ children }) {
           token: data.token,
           isLoaded: true
         });
+        
+        console.log('[Identity] ✓ Generated fresh identity:', data.ghostName, data.ghostId);
       } catch (err) {
         console.error('Identity initialization error:', err);
         setIdentity(prev => ({ ...prev, isLoaded: true }));

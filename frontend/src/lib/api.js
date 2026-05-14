@@ -1,7 +1,8 @@
 const API_URL = import.meta.env.VITE_API_URL;
 
 export async function getAuthHeader() {
-  const token = localStorage.getItem('drift_token');
+  // Use sessionStorage for per-tab token (not shared across tabs like localStorage)
+  const token = sessionStorage.getItem('drift_token');
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

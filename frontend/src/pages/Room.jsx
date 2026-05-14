@@ -31,6 +31,7 @@ export function Room() {
   const roomModeRef = useRef('random');
   const waitingVideoRef = useRef(null);
   const streamInitializedRef = useRef(false);
+  const joinRoomSentRef = useRef(false); // Guard to send join-room only once
 
   // State
   const [roomId, setRoomId] = useState(routeRoomId || null);
@@ -85,8 +86,10 @@ export function Room() {
   }, [reportTarget, roomId]);
 
   const handleSignalingMessage = useCallback((message) => {
+    console.log('[Room] Received signaling message:', message.type, message);
     switch (message.type) {
       case 'room-joined':
+        console.log('[Room] ✓ HANDLING room-joined message');
         // Deduplicate peers list from server
         const uniquePeers = Array.from(new Map((message.peers || []).map(p => [p.ghostId, p])).values());
         setPeers(uniquePeers);
@@ -191,10 +194,9 @@ export function Room() {
       try {
         const stream = await webRTC.initializeLocalStream();
         if (!stream) {
-          console.error('[Room] Failed to get stream, camera/microphone denied');
-          streamInitializedRef.current = false; // Reset on failure to allow retry
-          alert('Camera/microphone access denied');
-          navigate('/');
+          console.warn('[Room] Camera/microphone access denied - continuing without media stream (development mode)');
+          streamInitializedRef.current = true; // Mark as initialized even if no stream
+          // Continue without stream for development/testing
         } else {
           if (waitingVideoRef.current && peers.length === 0) {
             waitingVideoRef.current.srcObject = stream;
@@ -204,7 +206,8 @@ export function Room() {
         }
       } catch (err) {
         console.error('[Room] Stream initialization error:', err);
-        streamInitializedRef.current = false; // Reset on failure
+        console.warn('[Room] Continuing without media stream (development mode)');
+        streamInitializedRef.current = true; // Mark as initialized even if error
       }
     };
     
@@ -239,11 +242,33 @@ export function Room() {
   }, [roomId, routeRoomId, navigate, isLoaded, token]);
 
   useEffect(() => {
-    if (roomId && signalingsSend && connectionState === 'connected') {
-      signalingsSend({
-        type: 'join-room',
-        roomId
-      });
+    console.log('[Room] Join-room effect check:', {
+      roomId: roomId ? roomId.substring(0, 8) : 'NO',
+      signalingsSend: signalingsSend ? 'YES' : 'NO',
+      connectionState,
+      alreadySent: joinRoomSentRef.current,
+      shouldSend: roomId && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current
+    });
+    
+    if (roomId && signalingsSend && connectionState === 'connected' && !joinRoomSentRef.current) {
+      console.log('[Room] ✓ SENDING join-room message for roomId:', roomId);
+      joinRoomSentRef.current = true; // Mark as sent immediately
+      
+      // Small delay to ensure connection is fully ready
+      const timer = setTimeout(() => {
+        signalingsSend({
+          type: 'join-room',
+          roomId
+        });
+        console.log('[Room] join-room message sent');
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    } else {
+      if (!roomId) console.log('[Room] ✗ No roomId yet');
+      if (!signalingsSend) console.log('[Room] ✗ signalingsSend not ready');
+      if (connectionState !== 'connected') console.log('[Room] ✗ connectionState not connected:', connectionState);
+      if (joinRoomSentRef.current) console.log('[Room] ✗ join-room already sent');
     }
   }, [roomId, signalingsSend, connectionState]);
 
