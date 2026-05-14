@@ -277,21 +277,38 @@ export function useWebRTC(signalingRef) {
     };
 
     // BUG FIX 1: Add local tracks BEFORE createOffer is ever called
-    if (localStreamRef.current) {
-      const tracks = localStreamRef.current.getTracks();
-      console.log('[WebRTC] 🟢 Adding', tracks.length, 'local tracks to peer connection for', peerId);
-      tracks.forEach((track, idx) => {
-        pc.addTrack(track, localStreamRef.current);
-        console.log(`[WebRTC] ✅ Track ${idx + 1}/${tracks.length} added:`, { 
-          peerId, 
-          kind: track.kind, 
-          enabled: track.enabled,
-          label: track.label 
-        });
-      });
-      console.log('[WebRTC] ✓ All local tracks added successfully for', peerId);
+    console.log('[WebRTC] 🔍 Checking for local stream to add tracks... localStreamRef.current exists?', !!localStreamRef.current);
+    
+    if (localStreamRef.current && localStreamRef.current.getTracks) {
+      try {
+        const tracks = localStreamRef.current.getTracks();
+        console.log('[WebRTC] 🟢 Found', tracks.length, 'local tracks to add for peer', peerId);
+        
+        if (tracks.length > 0) {
+          tracks.forEach((track, idx) => {
+            try {
+              pc.addTrack(track, localStreamRef.current);
+              console.log(`[WebRTC] ✅ Track ${idx + 1}/${tracks.length} added to PC:`, { 
+                peerId, 
+                kind: track.kind, 
+                enabled: track.enabled,
+                label: track.label,
+                readyState: track.readyState
+              });
+            } catch (addErr) {
+              console.error(`[WebRTC] ❌ Failed to add track ${idx + 1}:`, addErr.message);
+            }
+          });
+          console.log('[WebRTC] ✓ All', tracks.length, 'local tracks added successfully for', peerId);
+        } else {
+          console.warn('[WebRTC] ⚠️ Local stream exists but has 0 tracks for', peerId);
+        }
+      } catch (tracksErr) {
+        console.error('[WebRTC] ❌ Error getting tracks from local stream:', tracksErr.message);
+      }
     } else {
-      console.error('[WebRTC] ❌ CRITICAL: Local stream is NULL when creating peer connection for', peerId);
+      console.error('[WebRTC] ❌ CRITICAL: Local stream is NULL/invalid when creating peer connection for', peerId);
+      console.error('[WebRTC] localStreamRef.current =', localStreamRef.current);
       console.error('[WebRTC] This will cause asymmetric streaming - tracks will not be sent to remote peer!');
     }
 
