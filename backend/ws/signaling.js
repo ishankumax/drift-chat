@@ -192,13 +192,21 @@ function initSignaling(server, redis) {
     // Check if room exists in Redis (was created via REST API)
     let redisPeers = [];
     try {
+      console.log(`[WS] Querying Redis for room:${roomId}...`);
       const roomData = await redis.hgetall(`room:${roomId}`);
-      if (roomData && roomData.peers) {
-        redisPeers = JSON.parse(roomData.peers || '[]');
-        console.log(`[WS] ✓ Loaded room from Redis with peers: ${redisPeers.join(', ')}`);
+      console.log(`[WS] Redis query result:`, JSON.stringify(roomData));
+      
+      if (roomData && Object.keys(roomData).length > 0) {
+        console.log(`[WS] Room found in Redis. Peers field:`, roomData.peers);
+        if (roomData.peers) {
+          redisPeers = JSON.parse(roomData.peers || '[]');
+          console.log(`[WS] ✓ Loaded room from Redis with peers: ${JSON.stringify(redisPeers)}`);
+        }
+      } else {
+        console.log(`[WS] Room NOT found in Redis or empty`);
       }
     } catch (err) {
-      console.error('[WS] Error loading room from Redis:', err.message);
+      console.error('[WS] Error loading room from Redis:', err.message, err.stack);
     }
 
     // Initialize room members set if needed
@@ -245,7 +253,7 @@ function initSignaling(server, redis) {
       })
       .filter(Boolean);
 
-    console.log(`[WS] Sending room-joined to ${ghostName}: ${peers.length} peers`);
+    console.log(`[WS] Sending room-joined to ${ghostName}: ${peers.length} peers - ${JSON.stringify(peers)}`);
     ws.send(JSON.stringify({
       type: 'room-joined',
       peers
