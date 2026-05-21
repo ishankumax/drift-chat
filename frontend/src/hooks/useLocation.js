@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { shareLocation, removeLocation } from '../lib/api';
 
 export function useLocation() {
@@ -7,46 +7,39 @@ export function useLocation() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [watchId, setWatchId] = useState(null);
-  const [permissionRequested, setPermissionRequested] = useState(false);
+  const permissionRequestedRef = useRef(false);
 
-  // Request location permission on initial website load
+  // Request location permission on initial website load (happens once)
   useEffect(() => {
-    const requestInitialPermission = async () => {
-      if (!navigator.geolocation) {
-        console.warn('Geolocation is not supported by your browser');
-        setPermissionRequested(true);
-        return;
-      }
+    if (permissionRequestedRef.current) return;
+    permissionRequestedRef.current = true;
 
-      // Request location permission when user first visits
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const { latitude, longitude, accuracy } = position.coords;
-          setLocation({ latitude, longitude, accuracy });
-          setPermissionRequested(true);
-        },
-        (err) => {
-          const errorMessages = {
-            1: 'Location permission denied',
-            2: 'Location is unavailable',
-            3: 'Location request timed out'
-          };
-          console.warn(errorMessages[err.code] || err.message);
-          setPermissionRequested(true);
-        },
-        {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 0
-        }
-      );
-    };
-
-    // Only request once per session
-    if (!permissionRequested) {
-      requestInitialPermission();
+    if (!navigator.geolocation) {
+      console.warn('Geolocation is not supported by your browser');
+      return;
     }
-  }, [permissionRequested]);
+
+    // Request location permission when user first visits
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude, accuracy } = position.coords;
+        setLocation({ latitude, longitude, accuracy });
+      },
+      (err) => {
+        const errorMessages = {
+          1: 'Location permission denied',
+          2: 'Location is unavailable',
+          3: 'Location request timed out'
+        };
+        console.warn(errorMessages[err.code] || err.message);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+  }, []);
 
   // Check if geolocation is available and already sharing
   useEffect(() => {
