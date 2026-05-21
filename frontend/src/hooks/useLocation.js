@@ -7,6 +7,46 @@ export function useLocation() {
   const [isLoading, setIsLoading] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   const [watchId, setWatchId] = useState(null);
+  const [permissionRequested, setPermissionRequested] = useState(false);
+
+  // Request location permission on initial website load
+  useEffect(() => {
+    const requestInitialPermission = async () => {
+      if (!navigator.geolocation) {
+        console.warn('Geolocation is not supported by your browser');
+        setPermissionRequested(true);
+        return;
+      }
+
+      // Request location permission when user first visits
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const { latitude, longitude, accuracy } = position.coords;
+          setLocation({ latitude, longitude, accuracy });
+          setPermissionRequested(true);
+        },
+        (err) => {
+          const errorMessages = {
+            1: 'Location permission denied',
+            2: 'Location is unavailable',
+            3: 'Location request timed out'
+          };
+          console.warn(errorMessages[err.code] || err.message);
+          setPermissionRequested(true);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0
+        }
+      );
+    };
+
+    // Only request once per session
+    if (!permissionRequested) {
+      requestInitialPermission();
+    }
+  }, [permissionRequested]);
 
   // Check if geolocation is available and already sharing
   useEffect(() => {
@@ -69,11 +109,15 @@ export function useLocation() {
   const startSharing = useCallback(async () => {
     try {
       setIsLoading(true);
-      const position = await requestLocation();
       
+      // Use already-captured location if available, otherwise request new one
+      let position = location;
       if (!position) {
-        setIsLoading(false);
-        return false;
+        position = await requestLocation();
+        if (!position) {
+          setIsLoading(false);
+          return false;
+        }
       }
 
       // Share location with server
