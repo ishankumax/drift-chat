@@ -60,13 +60,6 @@ function Navbar() {
               <span className="absolute left-0 bottom-0 w-0 h-[2px] bg-[#F4600C] transition-all duration-300 group-hover:w-full" />
             </a>
           ))}
-          <a
-            href="/map"
-            className="text-[#F5F0E8] text-sm uppercase tracking-widest font-semibold hover:text-[#F4600C] transition-colors relative group"
-          >
-            <span className="relative z-10">Map</span>
-            <span className="absolute left-0 bottom-0 w-0 h-[2px] bg-[#F4600C] transition-all duration-300 group-hover:w-full" />
-          </a>
         </nav>
 
         {/* Profile Badge */}
@@ -139,14 +132,17 @@ function Hero({ onStartDrifting, onCreateRoom, onViewMap, isLoading }) {
           <button 
             onClick={onStartDrifting}
             disabled={isLoading}
-            className="px-6 py-3 bg-[#1A1A0F] hover:bg-[#333] disabled:opacity-50 text-[#F5F0E8] font-bold uppercase tracking-wider rounded-full transition-all text-sm md:text-base whitespace-nowrap"
+            className="px-6 py-3 bg-[url('/start_drifting_bg.png')] bg-cover bg-center border-2 border-[#1A1A0F] hover:brightness-110 active:scale-95 disabled:opacity-50 text-[#F5F0E8] font-bold uppercase tracking-wider rounded-full transition-all text-sm md:text-base whitespace-nowrap shadow-md"
+            style={{
+              cursor: `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' style='font-size:24px'><text y='24'>🦊</text></svg>'), pointer`
+            }}
           >
             {isLoading ? 'Connecting...' : 'Start Drifting'}
           </button>
           <button 
             onClick={onCreateRoom}
             disabled={isLoading}
-            className="px-6 py-3 bg-transparent border-2 border-[#1A1A0F] hover:bg-[#1A1A0F]/10 disabled:opacity-50 text-[#1A1A0F] font-bold uppercase tracking-wider rounded-full transition-all text-sm md:text-base whitespace-nowrap"
+            className="px-6 py-3 bg-[url('/create_room_bg.png')] bg-cover bg-center border-2 border-[#1A1A0F] hover:brightness-95 active:scale-95 disabled:opacity-50 text-[#1A1A0F] font-bold uppercase tracking-wider rounded-full transition-all text-sm md:text-base whitespace-nowrap shadow-md"
           >
             {isLoading ? 'Creating...' : 'Create Room'}
           </button>
