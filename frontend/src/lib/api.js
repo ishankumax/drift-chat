@@ -88,3 +88,71 @@ export async function postFriendChatMessage(chatId, text) {
 
   return response.json();
 }
+
+// Location APIs
+export async function shareLocation(latitude, longitude, accuracy = 0) {
+  const headers = await getAuthHeader();
+
+  const response = await fetch(`${API_URL}/api/locations/share`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers
+    },
+    body: JSON.stringify({ latitude, longitude, accuracy })
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to share location');
+  }
+
+  return response.json();
+}
+
+export async function getActiveLocations() {
+  const headers = await getAuthHeader();
+
+  const response = await fetch(`${API_URL}/api/locations/active`, {
+    headers
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to get locations');
+  }
+
+  return response.json();
+}
+
+export async function removeLocation() {
+  const headers = await getAuthHeader();
+  const token = sessionStorage.getItem('drift_token');
+  
+  // Decode token to get ghostId
+  const decoded = JSON.parse(atob(token.split('.')[1]));
+  const ghostId = decoded.ghostId;
+
+  const response = await fetch(`${API_URL}/api/locations/${ghostId}`, {
+    method: 'DELETE',
+    headers
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to remove location');
+  }
+
+  return response.json();
+}
+
+export async function getUserLocation(ghostId) {
+  const headers = await getAuthHeader();
+
+  const response = await fetch(`${API_URL}/api/locations/user/${ghostId}`, {
+    headers
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to get user location');
+  }
+
+  return response.json();
+}

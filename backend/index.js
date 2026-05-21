@@ -9,6 +9,7 @@ const { initSignaling } = require('./ws/signaling');
 const identityRoutes = require('./routes/identity');
 const roomsRoutes = require('./routes/rooms');
 const friendsRoutes = require('./routes/friends');
+const locationsRoutes = require('./routes/locations');
 
 const app = express();
 
@@ -88,6 +89,7 @@ function requireAuth(req, res, next) {
 app.use('/api/identity', identityRoutes);
 app.use('/api/rooms', requireAuth, roomsRoutes);
 app.use('/api/friends', requireAuth, friendsRoutes);
+app.use('/api/locations', requireAuth, locationsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

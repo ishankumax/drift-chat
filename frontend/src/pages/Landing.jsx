@@ -37,6 +37,10 @@ export function Landing() {
     }
   };
 
+  const handleViewMap = () => {
+    navigate('/map');
+  };
+
   return (
     <div className="relative w-full">
       <GhostIdentityBadge />
@@ -45,6 +49,7 @@ export function Landing() {
       <LandingPage 
         onStartDrifting={handleStartDrifting}
         onCreateRoom={handleCreateRoom}
+        onViewMap={handleViewMap}
         isLoading={isLoading}
       />
 

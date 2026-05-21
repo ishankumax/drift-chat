@@ -60,6 +60,13 @@ function Navbar() {
               <span className="absolute left-0 bottom-0 w-0 h-[2px] bg-[#F4600C] transition-all duration-300 group-hover:w-full" />
             </a>
           ))}
+          <a
+            href="/map"
+            className="text-[#F5F0E8] text-sm uppercase tracking-widest font-semibold hover:text-[#F4600C] transition-colors relative group"
+          >
+            <span className="relative z-10">Map</span>
+            <span className="absolute left-0 bottom-0 w-0 h-[2px] bg-[#F4600C] transition-all duration-300 group-hover:w-full" />
+          </a>
         </nav>
 
         {/* Profile Badge */}
@@ -82,7 +89,7 @@ function Navbar() {
 // ─────────────────────────────────────────────────────────────
 // Hero Section
 // ─────────────────────────────────────────────────────────────
-function Hero({ onStartDrifting, onCreateRoom, isLoading }) {
+function Hero({ onStartDrifting, onCreateRoom, onViewMap, isLoading }) {
 
   return (
     <section 
@@ -142,6 +149,12 @@ function Hero({ onStartDrifting, onCreateRoom, isLoading }) {
             className="px-6 py-3 bg-transparent border-2 border-[#1A1A0F] hover:bg-[#1A1A0F]/10 disabled:opacity-50 text-[#1A1A0F] font-bold uppercase tracking-wider rounded-full transition-all text-sm md:text-base whitespace-nowrap"
           >
             {isLoading ? 'Creating...' : 'Create Room'}
+          </button>
+          <button 
+            onClick={onViewMap}
+            className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-[#F5F0E8] font-bold uppercase tracking-wider rounded-full transition-all text-sm md:text-base whitespace-nowrap"
+          >
+            View Map
           </button>
         </div>
 
@@ -421,12 +434,12 @@ function Footer() {
 // ─────────────────────────────────────────────────────────────
 // Main LandingPage Component
 // ─────────────────────────────────────────────────────────────
-export default function LandingPage({ onStartDrifting, onCreateRoom, isLoading }) {
+export default function LandingPage({ onStartDrifting, onCreateRoom, onViewMap, isLoading }) {
   // We apply global typography via container class text styling
   return (
     <div className="w-full min-h-screen font-sans selection:bg-[#F4600C] selection:text-[#F5F0E8] scroll-smooth origin-top">
       <Navbar />
-      <Hero onStartDrifting={onStartDrifting} onCreateRoom={onCreateRoom} isLoading={isLoading} />
+      <Hero onStartDrifting={onStartDrifting} onCreateRoom={onCreateRoom} onViewMap={onViewMap} isLoading={isLoading} />
       <WhySection />
       <StatsSection />
       <FeaturesSection />
