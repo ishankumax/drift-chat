@@ -38,7 +38,7 @@ const createUserIcon = (avatarId, userName, isCurrentUser = false) => {
   const initials = userName.substring(0, 2).toUpperCase();
 
   return L.divIcon({
-    className: 'custom-marker',
+    className: `custom-marker ${isCurrentUser ? 'marker-current' : 'marker-other'}`,
     html: `
       <div style="
         background-color: ${color};
@@ -60,8 +60,7 @@ const createUserIcon = (avatarId, userName, isCurrentUser = false) => {
         ${initials}
       </div>
     `,
-    iconSize: [isCurrentUser ? 48 : 40, isCurrentUser ? 48 : 40],
-    className: isCurrentUser ? 'marker-current' : 'marker-other'
+    iconSize: [isCurrentUser ? 48 : 40, isCurrentUser ? 48 : 40]
   });
 };
 

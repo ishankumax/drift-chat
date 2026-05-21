@@ -152,9 +152,9 @@ function Hero({ onStartDrifting, onCreateRoom, onViewMap, isLoading }) {
           </button>
           <button 
             onClick={onViewMap}
-            className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-[#F5F0E8] font-bold uppercase tracking-wider rounded-full transition-all text-sm md:text-base whitespace-nowrap"
+            className="px-6 py-3 bg-[url('/map_button_bg.png')] bg-cover bg-center border-2 border-[#1A1A0F] hover:brightness-110 active:scale-95 text-[#1A1A0F] font-bold uppercase tracking-wider rounded-full transition-all text-sm md:text-base whitespace-nowrap shadow-md"
           >
-            View Map
+            Map
           </button>
         </div>
 
